@@ -740,10 +740,21 @@
     /* ================================================================
        RESPONSIVE
     ================================================================ */
-    @media (max-width: 640px) {
-      :root { --sidebar-w: 0px; }
-      .sidebar { display: none; }
-    }
+@media (max-width: 640px) {
+  .app { flex-direction: column; }
+  .sidebar {
+    width: 100%;
+    border-right: none;
+    border-bottom: 1px solid var(--border-subtle);
+    max-height: 280px;
+  }
+  .files-section { display: none; }
+  .controls { padding: 8px 12px; }
+  .chat-panel { flex: 1; min-height: 0; }
+  .messages { padding: 12px; }
+  .input-bar { padding: 10px 12px; }
+  .chat-header { padding: 0 12px; }
+}
   </style>
 </head>
 
