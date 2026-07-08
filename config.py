@@ -34,6 +34,7 @@ class Settings(BaseSettings):
 
     # --- Groq (free LLM API) ---
     groq_api_key: str = Field(..., description="Groq API key — get one free at console.groq.com")
+    hf_token: str = Field(..., description="HuggingFace API token — get free at huggingface.co/settings/tokens")	
 
     chat_model: str = Field(
         default="llama-3.3-70b-versatile",
@@ -41,10 +42,10 @@ class Settings(BaseSettings):
     )
 
     # --- Local embeddings (no API key needed) ---
-    embedding_model: str = Field(
-        default="all-MiniLM-L6-v2",
-        description="HuggingFace sentence-transformers model for local embeddings",
-    )
+	embedding_model: str = Field(
+    		default="sentence-transformers/all-MiniLM-L6-v2",
+    		description="HuggingFace model for inference API embeddings",
+)
 
     # --- Chunking ---
     chunk_size: int = Field(

@@ -30,7 +30,7 @@ from typing import Optional
 import fitz  # PyMuPDF
 from groq import Groq
 from langchain.schema import Document
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_community.embeddings import HuggingFaceInferenceAPIEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
@@ -217,10 +217,9 @@ class RAGEngine:
             "Loading local embedding model '%s' (downloads once, then cached)…",
             settings.embedding_model,
         )
-        self._embeddings = HuggingFaceEmbeddings(
-            model_name=settings.embedding_model,
-            model_kwargs={"device": "cpu"},
-            encode_kwargs={"normalize_embeddings": True},
+        self._embeddings = HuggingFaceInferenceAPIEmbeddings(
+		    api_key=settings.hf_token,
+    		    model_name=settings.embedding_model,
         )
         logger.info("Embedding model ready.")
 
