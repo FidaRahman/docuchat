@@ -1,6 +1,5 @@
 """
-rag_engine.py - Core RAG engine for DocuChat.
-Uses HuggingFace Inference API for embeddings (no local model, fits in 512MB RAM).
+rag_engine.py - Core RAG engine with page number tracking.
 """
 
 import logging
@@ -11,7 +10,6 @@ from typing import Optional
 import fitz
 from groq import Groq
 from langchain.schema import Document
-from langchain_community.embeddings import HuggingFaceInferenceAPIEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
@@ -20,38 +18,42 @@ from config import settings
 logger = logging.getLogger(__name__)
 
 
-def extract_text_from_pdf(file_bytes: bytes, filename: str) -> str:
-    """Extract text from PDF using PyMuPDF."""
+def extract_text_from_pdf(file_bytes: bytes, filename: str) -> list[dict]:
+    """
+    Extract text from PDF with page number tracking.
+    Returns list of {text, page} dicts instead of one big string.
+    """
     try:
         doc = fitz.open(stream=file_bytes, filetype="pdf")
     except Exception as exc:
         raise ValueError(f"Cannot parse '{filename}' as a PDF: {exc}") from exc
 
     pages = []
-    for page in doc:
+    for page_num, page in enumerate(doc, start=1):
         text = page.get_text("text")
         if text.strip():
-            pages.append(text.strip())
+            pages.append({"text": text.strip(), "page": page_num})
+
     doc.close()
 
     if not pages:
         raise ValueError(f"No extractable text found in '{filename}'.")
 
-    return "\n\n".join(pages)
+    return pages
 
 
-def extract_text_from_txt(file_bytes: bytes, filename: str) -> str:
-    """Decode a plain text file."""
+def extract_text_from_txt(file_bytes: bytes, filename: str) -> list[dict]:
+    """Decode plain text file — no page numbers, use page 1."""
     for encoding in ("utf-8", "latin-1"):
         try:
-            return file_bytes.decode(encoding)
+            return [{"text": file_bytes.decode(encoding), "page": 1}]
         except UnicodeDecodeError:
             continue
     raise ValueError(f"Unable to decode '{filename}' as text.")
 
 
-def extract_text(file_bytes: bytes, filename: str) -> str:
-    """Route file to correct extractor based on extension."""
+def extract_pages(file_bytes: bytes, filename: str) -> list[dict]:
+    """Route file to correct extractor."""
     suffix = Path(filename).suffix.lower()
     if suffix == ".pdf":
         return extract_text_from_pdf(file_bytes, filename)
@@ -60,40 +62,56 @@ def extract_text(file_bytes: bytes, filename: str) -> str:
     raise ValueError(f"Unsupported file type '{suffix}'.")
 
 
-def chunk_text(text: str, source: str) -> list[Document]:
-    """Split text into overlapping chunks."""
+def chunk_pages(pages: list[dict], source: str) -> list[Document]:
+    """
+    Split pages into chunks, preserving page number in metadata.
+    Each chunk knows which page it came from.
+    """
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=settings.chunk_size,
         chunk_overlap=settings.chunk_overlap,
         separators=["\n\n", "\n", ". ", " ", ""],
         length_function=len,
     )
-    chunks = splitter.split_text(text)
-    return [
-        Document(
-            page_content=chunk,
-            metadata={"source": source, "chunk_index": idx},
-        )
-        for idx, chunk in enumerate(chunks)
-    ]
+
+    documents = []
+    chunk_index = 0
+
+    for page_data in pages:
+        chunks = splitter.split_text(page_data["text"])
+        for chunk in chunks:
+            documents.append(
+                Document(
+                    page_content=chunk,
+                    metadata={
+                        "source": source,
+                        "page": page_data["page"],
+                        "chunk_index": chunk_index,
+                    },
+                )
+            )
+            chunk_index += 1
+
+    return documents
 
 
 class RAGEngine:
-    """RAG engine using HuggingFace Inference API embeddings and Groq LLM."""
 
     def __init__(self) -> None:
-        logger.info("Initialising embeddings via HuggingFace Inference API...")
-        self._embeddings = HuggingFaceInferenceAPIEmbeddings(
-            api_key=settings.hf_token,
-            model_name=settings.embedding_model,
+        logger.info("Loading local sentence-transformers model...")
+        from langchain_huggingface import HuggingFaceEmbeddings
+        self._embeddings = HuggingFaceEmbeddings(
+            model_name="all-MiniLM-L6-v2",
+            model_kwargs={"device": "cpu"},
+            encode_kwargs={"normalize_embeddings": True},
         )
         self._groq_client = Groq(api_key=settings.groq_api_key)
         self._vector_store: Optional[FAISS] = None
         self._chunk_count: int = 0
         self._try_load_index()
+        logger.info("RAG engine ready.")
 
     def _try_load_index(self) -> None:
-        """Load persisted FAISS index from disk if it exists."""
         index_dir = settings.faiss_index_dir
         if not index_dir.exists():
             return
@@ -111,7 +129,6 @@ class RAGEngine:
             self._chunk_count = 0
 
     def _save_index(self) -> None:
-        """Save FAISS index to disk."""
         if self._vector_store is None:
             return
         index_dir = settings.faiss_index_dir
@@ -119,17 +136,17 @@ class RAGEngine:
         self._vector_store.save_local(str(index_dir))
 
     def add_documents(self, file_bytes_list: list[bytes], filenames: list[str]) -> dict:
-        """Parse, chunk, embed and index uploaded files."""
         all_documents = []
         processed_files = []
         errors = []
 
         for file_bytes, filename in zip(file_bytes_list, filenames):
             try:
-                text = extract_text(file_bytes, filename)
-                docs = chunk_text(text, source=filename)
+                pages = extract_pages(file_bytes, filename)
+                docs = chunk_pages(pages, source=filename)
                 all_documents.extend(docs)
                 processed_files.append(filename)
+                logger.info("'%s' → %d chunks across %d pages", filename, len(docs), len(pages))
             except ValueError as exc:
                 errors.append({"file": filename, "error": str(exc)})
 
@@ -153,13 +170,20 @@ class RAGEngine:
             "errors": errors,
         }
 
-    def query(self, question: str, conversation_history: list[dict]) -> tuple[str, list[str]]:
-        """Retrieve relevant chunks and generate a grounded answer."""
+    def query(self, question: str, conversation_history: list[dict]) -> tuple[str, list[dict]]:
+        """
+        Returns answer and list of source dicts with keys:
+        - text: chunk preview
+        - source: filename
+        - page: page number
+        """
         if self._vector_store is None or self._chunk_count == 0:
             return settings.no_context_reply, []
 
         try:
-            retrieved_docs = self._vector_store.similarity_search(question, k=settings.top_k_results)
+            retrieved_docs = self._vector_store.similarity_search(
+                question, k=settings.top_k_results
+            )
         except Exception as exc:
             raise RuntimeError(f"Retrieval failed: {exc}") from exc
 
@@ -167,14 +191,21 @@ class RAGEngine:
             return settings.no_context_reply, []
 
         context_parts = []
-        source_previews = []
+        sources = []
 
         for i, doc in enumerate(retrieved_docs, start=1):
             source_name = doc.metadata.get("source", "unknown")
+            page_num = doc.metadata.get("page", "?")
             chunk_content = doc.page_content.strip()
-            context_parts.append(f"[Source {i} - {source_name}]\n{chunk_content}")
-            preview = chunk_content[:200].replace("\n", " ")
-            source_previews.append(f"[{source_name}] {preview}...")
+
+            context_parts.append(
+                f"[Source {i} — {source_name}, Page {page_num}]\n{chunk_content}"
+            )
+            sources.append({
+                "text": chunk_content,
+                "source": source_name,
+                "page": page_num,
+            })
 
         context_block = "\n\n---\n\n".join(context_parts)
 
@@ -196,10 +227,9 @@ class RAGEngine:
             raise RuntimeError(f"LLM call failed: {exc}") from exc
 
         answer = response.choices[0].message.content or settings.no_context_reply
-        return answer.strip(), source_previews
+        return answer.strip(), sources
 
     def reset(self) -> None:
-        """Wipe the FAISS index from memory and disk."""
         self._vector_store = None
         self._chunk_count = 0
         index_dir = settings.faiss_index_dir

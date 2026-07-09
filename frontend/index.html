@@ -630,14 +630,16 @@
       background: var(--bg-raised);
       border: 1px solid var(--border-subtle);
       border-radius: var(--radius-sm);
-      padding: 6px 10px;
+      padding: 8px 10px;
       font-size: 11px;
       color: var(--text-secondary);
       font-family: var(--font-mono);
       line-height: 1.5;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+      transition: border-color 0.15s;
+    }
+
+    .source-chip:hover {
+      border-color: var(--border-focus);
     }
 
     /* ================================================================
@@ -1062,12 +1064,11 @@
 
     bubbleWrap.appendChild(bubble);
 
-    // Sources (bot only)
+// Sources (bot only)
     if (role === 'bot' && sources.length > 0) {
       const sourcesBlock = document.createElement('div');
       sourcesBlock.className = 'sources-block';
 
-      const toggleId = 'src-' + Date.now();
       const toggle = document.createElement('button');
       toggle.className = 'sources-toggle';
       toggle.innerHTML = `<i class="arrow">▶</i> ${sources.length} source${sources.length > 1 ? 's' : ''} used`;
@@ -1075,13 +1076,59 @@
 
       const list = document.createElement('div');
       list.className = 'sources-list';
-      list.id = toggleId;
 
       sources.forEach(src => {
         const chip = document.createElement('div');
         chip.className = 'source-chip';
-        chip.title = src;
-        chip.textContent = src;
+
+        // Header row: filename + page badge + copy button
+        const header = document.createElement('div');
+        header.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:5px;';
+
+        const fileIcon = document.createElement('span');
+        fileIcon.textContent = src.source.endsWith('.pdf') ? '📄' : '📝';
+        fileIcon.style.fontSize = '11px';
+
+        const fileName = document.createElement('span');
+        fileName.textContent = src.source;
+        fileName.style.cssText = 'font-weight:600;color:var(--text-secondary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+
+        const pageBadge = document.createElement('span');
+        pageBadge.textContent = `Page ${src.page}`;
+        pageBadge.style.cssText = 'background:var(--accent-glow);color:var(--accent-bright);border:1px solid rgba(91,108,240,0.3);padding:1px 7px;border-radius:10px;font-size:10px;font-weight:600;white-space:nowrap;flex-shrink:0;';
+
+        const copyBtn = document.createElement('button');
+        copyBtn.innerHTML = '⎘';
+        copyBtn.title = 'Copy source text';
+        copyBtn.style.cssText = 'background:none;border:1px solid var(--border-subtle);border-radius:4px;color:var(--text-muted);cursor:pointer;padding:1px 6px;font-size:11px;flex-shrink:0;transition:all 0.15s;';
+        copyBtn.addEventListener('mouseenter', () => copyBtn.style.borderColor = 'var(--accent-bright)');
+        copyBtn.addEventListener('mouseleave', () => copyBtn.style.borderColor = 'var(--border-subtle)');
+        copyBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          navigator.clipboard.writeText(src.text).then(() => {
+            copyBtn.innerHTML = '✓';
+            copyBtn.style.color = 'var(--success)';
+            copyBtn.style.borderColor = 'var(--success)';
+            setTimeout(() => {
+              copyBtn.innerHTML = '⎘';
+              copyBtn.style.color = 'var(--text-muted)';
+              copyBtn.style.borderColor = 'var(--border-subtle)';
+            }, 1500);
+          });
+        });
+
+        header.appendChild(fileIcon);
+        header.appendChild(fileName);
+        header.appendChild(pageBadge);
+        header.appendChild(copyBtn);
+
+        // Preview text
+        const preview = document.createElement('div');
+        preview.style.cssText = 'font-size:11px;color:var(--text-muted);line-height:1.5;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;';
+        preview.textContent = src.text;
+
+        chip.appendChild(header);
+        chip.appendChild(preview);
         list.appendChild(chip);
       });
 

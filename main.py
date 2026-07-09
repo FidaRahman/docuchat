@@ -83,12 +83,10 @@ class ChatRequest(BaseModel):
 
 
 class ChatResponse(BaseModel):
-    """Response body for POST /chat."""
-
     answer: str = Field(..., description="LLM-generated answer grounded in the documents.")
-    sources: list[str] = Field(
+    sources: list[dict] = Field(
         default_factory=list,
-        description="Short previews of the retrieved document chunks used to generate the answer.",
+        description="Retrieved chunks with source filename, page number, and text preview.",
     )
 
 
