@@ -19,9 +19,10 @@ class Settings(BaseSettings):
     )
 
     groq_api_key: str = Field(..., description="Groq API key")
+    hf_token: str = Field(..., description="HuggingFace API token")
 
     chat_model: str = Field(default="llama-3.3-70b-versatile")
-    embedding_model: str = Field(default="BAAI/bge-small-en-v1.5")
+    embedding_model: str = Field(default="sentence-transformers/all-MiniLM-L6-v2")
 
     chunk_size: int = Field(default=500)
     chunk_overlap: int = Field(default=50)
@@ -38,6 +39,13 @@ class Settings(BaseSettings):
     def groq_key_must_not_be_placeholder(cls, v: str) -> str:
         if v.strip() in ("your_groq_api_key_here", "", "gsk_..."):
             raise ValueError("GROQ_API_KEY is not set.")
+        return v.strip()
+
+    @field_validator("hf_token")
+    @classmethod
+    def hf_token_must_not_be_placeholder(cls, v: str) -> str:
+        if v.strip() in ("your_huggingface_token_here", "", "hf_..."):
+            raise ValueError("HF_TOKEN is not set.")
         return v.strip()
 
     @property

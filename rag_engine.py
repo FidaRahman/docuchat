@@ -1,6 +1,6 @@
 """
-rag_engine.py - Core RAG engine using fastembed for local embeddings.
-fastembed has no PyTorch dependency - uses ONNX runtime, only ~50MB RAM.
+rag_engine.py - Core RAG engine for DocuChat.
+Uses HuggingFace Inference API for embeddings (no local model, fits in 512MB RAM).
 """
 
 import logging
@@ -9,35 +9,15 @@ from pathlib import Path
 from typing import Optional
 
 import fitz
-import numpy as np
-from fastembed import TextEmbedding
 from groq import Groq
 from langchain.schema import Document
+from langchain_community.embeddings import HuggingFaceInferenceAPIEmbeddings
 from langchain_community.vectorstores import FAISS
-from langchain_community.embeddings.base import Embeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from config import settings
 
 logger = logging.getLogger(__name__)
-
-
-class FastEmbedEmbeddings(Embeddings):
-    """
-    LangChain-compatible wrapper around fastembed.
-    Runs locally via ONNX — no API calls, no PyTorch, ~50MB RAM.
-    """
-
-    def __init__(self, model_name: str = "BAAI/bge-small-en-v1.5"):
-        self._model = TextEmbedding(model_name=model_name)
-
-    def embed_documents(self, texts: list[str]) -> list[list[float]]:
-        embeddings = list(self._model.embed(texts))
-        return [e.tolist() for e in embeddings]
-
-    def embed_query(self, text: str) -> list[float]:
-        embeddings = list(self._model.embed([text]))
-        return embeddings[0].tolist()
 
 
 def extract_text_from_pdf(file_bytes: bytes, filename: str) -> str:
@@ -99,16 +79,18 @@ def chunk_text(text: str, source: str) -> list[Document]:
 
 
 class RAGEngine:
-    """RAG engine using fastembed (local ONNX) and Groq LLM."""
+    """RAG engine using HuggingFace Inference API embeddings and Groq LLM."""
 
     def __init__(self) -> None:
-        logger.info("Loading fastembed model (ONNX, no PyTorch)...")
-        self._embeddings = FastEmbedEmbeddings(model_name="BAAI/bge-small-en-v1.5")
+        logger.info("Initialising embeddings via HuggingFace Inference API...")
+        self._embeddings = HuggingFaceInferenceAPIEmbeddings(
+            api_key=settings.hf_token,
+            model_name=settings.embedding_model,
+        )
         self._groq_client = Groq(api_key=settings.groq_api_key)
         self._vector_store: Optional[FAISS] = None
         self._chunk_count: int = 0
         self._try_load_index()
-        logger.info("RAG engine ready.")
 
     def _try_load_index(self) -> None:
         """Load persisted FAISS index from disk if it exists."""
@@ -177,9 +159,7 @@ class RAGEngine:
             return settings.no_context_reply, []
 
         try:
-            retrieved_docs = self._vector_store.similarity_search(
-                question, k=settings.top_k_results
-            )
+            retrieved_docs = self._vector_store.similarity_search(question, k=settings.top_k_results)
         except Exception as exc:
             raise RuntimeError(f"Retrieval failed: {exc}") from exc
 
